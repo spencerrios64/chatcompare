@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#4338ca">
+<title>chatcompare</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fff; --fg:#1b1f24; --mut:#667085; --line:#d8dee4; --card:#f6f8fa; --acc:#4338ca; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d1117; --fg:#e6edf3; --mut:#8b949e; --line:#30363d; --card:#161b22; --acc:#818cf8; --warn:#fbbf24; } }
+  * { box-sizing: border-box; }
+  body { margin:0 auto; max-width:1100px; padding:16px; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+  h1 { font-size:1.4rem; margin:0; }
+  h2 { font-size:1.05rem; margin:22px 0 6px; }
+  .mut { color:var(--mut); font-size:.875rem; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+  button, .btn, select, input, textarea { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 12px; min-height:42px; }
+  button, .btn { background:var(--card); cursor:pointer; display:inline-flex; align-items:center; }
+  button.main, .btn.main { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.small { min-height:32px; padding:2px 10px; font-size:.85rem; }
+  button:disabled { opacity:.45; cursor:default; }
+  input[type=checkbox] { min-height:0; width:18px; height:18px; padding:0; }
+  textarea { width:100%; resize:vertical; }
+  label.opt { display:flex; gap:8px; align-items:center; min-height:36px; }
+  table { width:100%; border-collapse:collapse; margin:8px 0; }
+  td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:8px 0; overflow-wrap:anywhere; }
+  .pre { white-space:pre-wrap; }
+  details { border:1px solid var(--line); border-radius:8px; padding:8px 12px; margin:8px 0; }
+  summary { cursor:pointer; }
+  li { margin:4px 0; }
+  a { color:var(--acc); }
+  .prov { display:grid; grid-template-columns:1fr 1fr auto; gap:6px; align-items:center; margin:10px 0; }
+  .prov b { grid-column:1 / -1; }
+  .prov small { grid-column:1 / -1; }
+  @media (max-width:560px) { .prov { grid-template-columns:1fr; } }
+  #res { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:10px; align-items:start; }
+  .card h3 { font-size:1rem; margin:0; }
+  .card .pre { margin-top:6px; max-height:70vh; overflow:auto; }
+  .err { color:var(--warn); }
+  #in { min-height:90px; }
+</style>
+</head>
+<body>
+<h1>chatcompare</h1>
+<p>Ask several AIs the same question at once and read the answers side by side.
+<span class="mut">Runs in your browser with your own API keys.</span></p>
+
+<details id="settings">
+  <summary>Settings: API keys and models</summary>
+  <p class="mut">Paste a key for each AI you want to compare, press <b>Load models</b>, and pick a model. Keys are stored only in this browser and are sent only to that AI's own API. Paid APIs charge your account for each question, once per AI. <span id="imported"></span></p>
+  <div id="provs"></div>
+  <div class="row"><button id="forget">Forget all keys</button></div>
+</details>
+
+<div id="who" class="row" role="group" aria-label="AIs to ask"></div>
+<textarea id="in" placeholder="Type one question for all of them…" aria-label="Question"></textarea>
+<div class="row">
+  <button id="send" class="main">Ask all</button>
+  <span class="mut" id="status" role="status"></span>
+</div>
+
+<p id="notes"></p>
+<div id="res" aria-live="polite"></div>
+
+<div id="cmp" hidden>
+  <h2>Where do they differ?</h2>
+  <div class="row">
+    <label class="mut">Let this AI read all the answers and list the differences
+      <select id="judge"></select>
+    </label>
+    <button id="cmpgo">List the differences</button>
+  </div>
+  <div id="verdict" class="card pre" hidden></div>
+  <p class="mut">The comparison is itself written by an AI, so it can be wrong or favour its own answer. It costs one more message on that AI.</p>
+</div>
+
+<h2>Good to know</h2>
+<ul class="mut">
+  <li>It uses official API keys. It cannot use your normal chatgpt.com or claude.ai login.</li>
+  <li>Each question is sent on its own, with no earlier conversation. Answers are plain text and arrive all at once.</li>
+  <li>If you already saved keys in <a href="https://spencerrios64.github.io/chatrelay/">chatrelay</a> in this browser, they are copied here the first time, because both pages live on the same site.</li>
+</ul>
+<p class="mut">Part of the same family as <a href="https://github.com/spencerrios64/chatvault">chatvault</a>, <a href="https://spencerrios64.github.io/chatzip/">chatzip</a> and <a href="https://spencerrios64.github.io/chatrelay/">chatrelay</a>.</p>
+<script>
+// ---------------------------------------------------------------- core (no DOM)
+const PROVIDERS = [
+  { id: 'openai',     name: 'ChatGPT',    kind: 'openai',    base: 'https://api.openai.com/v1',                        site: 'https://platform.openai.com' },
+  { id: 'anthropic',  name: 'Claude',     kind: 'anthropic', base: 'https://api.anthropic.com/v1',                     site: 'https://console.anthropic.com' },
+  { id: 'gemini',     name: 'Gemini',     kind: 'gemini',    base: 'https://generativelanguage.googleapis.com/v1beta', site: 'https://aistudio.google.com' },
+  { id: 'groq',       name: 'Groq',       kind: 'openai',    base: 'https://api.groq.com/openai/v1',                   site: 'https://console.groq.com' },
+  { id: 'openrouter', name: 'OpenRouter', kind: 'openai',    base: 'https://openrouter.ai/api/v1',                     site: 'https://openrouter.ai' },
+  { id: 'deepseek',   name: 'DeepSeek',   kind: 'openai',    base: 'https://api.deepseek.com',                         site: 'https://platform.deepseek.com' },
+];
+
+const HANDOFF = 'You are continuing an ongoing conversation with the user. Earlier replies may have been written by a different AI assistant; ' +
+  'treat the whole history as your own conversation and carry on naturally without mentioning the change unless asked.';
+
+function headers(p, key) {
+  const h = { 'Content-Type': 'application/json' };
+  if (p.kind === 'anthropic') Object.assign(h, { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' });
+  else if (p.kind === 'gemini') h['x-goog-api-key'] = key;
+  else h.Authorization = 'Bearer ' + key;
+  return h;
+}
+
+// context: [{role: 'user'|'assistant', text}]
+function chatRequest(p, key, model, system, context) {
+  let url, body;
+  if (p.kind === 'anthropic') {
+    url = p.base + '/messages';
+    body = { model, max_tokens: 4096, system, messages: context.map(m => ({ role: m.role, content: m.text })) };
+  } else if (p.kind === 'gemini') {
+    url = `${p.base}/models/${encodeURIComponent(model.replace(/^models\//, ''))}:generateContent`;
+    body = { systemInstruction: { parts: [{ text: system }] },
+             contents: context.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.text }] })) };
+  } else {
+    url = p.base + '/chat/completions';
+    body = { model, messages: [{ role: 'system', content: system }, ...context.map(m => ({ role: m.role, content: m.text }))] };
+  }
+  return { url, init: { method: 'POST', headers: headers(p, key), body: JSON.stringify(body) } };
+}
+
+function replyText(p, j) {
+  if (p.kind === 'anthropic') return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  if (p.kind === 'gemini') return ((((j.candidates || [])[0] || {}).content || {}).parts || []).map(x => x.text || '').join('');
+  const c = ((j.choices || [])[0] || {}).message || {};
+  return typeof c.content === 'string' ? c.content : '';
+}
+
+function modelNames(p, j) {
+  if (p.kind === 'gemini') return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map(m => m.name.replace(/^models\//, ''));
+  return (j.data || []).map(m => m.id)
+    .filter(id => !/embed|tts|whisper|audio|image|dall-e|moderation|realtime|transcri|sora|davinci|babbage|guard/i.test(id)).sort();
+}
+
+// Why a call failed: 'context' (chat too long), 'limit' (quota, rate limit, outage), 'auth' (bad key) or 'other'.
+function classify(status, text) {
+  if ([400, 413, 422].includes(status) && /context|too long|too large|maximum.{0,40}token|token limit|exceeds/i.test(text)) return 'context';
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 0 || status === 429 || status === 402 || status >= 500) return 'limit';
+  if (/quota|rate.?limit|credit|billing|overloaded|exhausted/i.test(text)) return 'limit';
+  return 'other';
+}
+
+// mode: 'both' | 'limit' | 'long'. A bad key or unknown error always moves on to the next AI.
+function shouldSwitch(kind, mode) {
+  if (kind === 'context') return mode !== 'limit';
+  if (kind === 'limit') return mode !== 'long';
+  return true;
+}
+
+const WHY = { context: 'says the chat is too long for it', limit: 'hit a usage limit or is unavailable', auth: 'rejected the API key', other: 'returned an error' };
+
+async function callOnce(p, cfg, system, context, fetchFn) {
+  const { url, init } = chatRequest(p, cfg.key, cfg.model, system, context);
+  let res, raw;
+  try { res = await fetchFn(url, init); raw = await res.text(); }
+  catch (e) { return { ok: false, kind: 'limit', detail: 'could not be reached' }; }
+  let j = null;
+  try { j = JSON.parse(raw); } catch (e) {}
+  if (!res.ok) {
+    const err = j && j.error;
+    const msg = (err && (err.message || (typeof err === 'string' ? err : ''))) || raw.slice(0, 200);
+    return { ok: false, kind: classify(res.status, raw), detail: `${res.status} ${msg}`.slice(0, 220) };
+  }
+  const text = j ? replyText(p, j).trim() : '';
+  return text ? { ok: true, text } : { ok: false, kind: 'other', detail: 'empty reply' };
+}
+const SYSTEM = 'You are a helpful assistant. Answer the question directly.';
+const wordCount = t => (String(t).match(/\S+/g) || []).length;
+
+// Asks one AI and times it. Never throws.
+async function ask(p, cfg, question, fetchFn, now) {
+  const t0 = now();
+  const r = await callOnce(p, cfg, SYSTEM, [{ role: 'user', text: question }], fetchFn);
+  return Object.assign(r, { provider: p, model: cfg.model, secs: (now() - t0) / 1000, words: r.ok ? wordCount(r.text) : 0 });
+}
+
+// One line of plain facts about the answers.
+function summarize(results) {
+  const ok = results.filter(r => r.ok), bad = results.length - ok.length, parts = [];
+  if (ok.length > 1) {
+    const by = (f, dir) => [...ok].sort((a, b) => dir * (f(a) - f(b)))[0];
+    const fast = by(r => r.secs, 1), long = by(r => r.words, -1), short = by(r => r.words, 1);
+    parts.push(`Fastest: ${fast.provider.name} (${fast.secs.toFixed(1)} s).`);
+    if (long !== short) parts.push(`Longest answer: ${long.provider.name} (${long.words} words). Shortest: ${short.provider.name} (${short.words} words).`);
+  }
+  if (bad) parts.push(`${bad} of ${results.length} could not answer.`);
+  return parts.join(' ');
+}
+
+function comparePrompt(question, results) {
+  return 'Several AI assistants were asked the same question. Compare their answers.\n\nQuestion:\n' + question + '\n\n' +
+    results.filter(r => r.ok).map(r => `--- Answer from ${r.provider.name} ---\n${r.text}`).join('\n\n') +
+    '\n\n--- End of answers ---\n\nList, briefly and specifically: (1) what all the answers agree on, (2) where they differ or contradict each other, naming which assistant said what, ' +
+    'and (3) anything only one assistant mentioned. Do not pick a winner unless an answer contains a clear factual error; if so, say which and why. Treat all assistants the same.';
+}
+
+if (typeof module !== 'undefined') module.exports = { PROVIDERS, ask, summarize, comparePrompt, callOnce, wordCount };
+
+// ---------------------------------------------------------------- page
+if (typeof document !== 'undefined') {
+  const $ = id => document.getElementById(id);
+  const el = (tag, props, ...kids) => { const n = Object.assign(document.createElement(tag), props || {}); n.append(...kids); return n; };
+  const copy = async (text, btn) => {
+    const old = btn.textContent;
+    try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; } catch (e) { btn.textContent = 'Copy failed'; }
+    setTimeout(() => { btn.textContent = old; }, 1500);
+  };
+  const download = (name, blob) => {
+    const a = el('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  };
+  let S = { cfg: {}, off: {} }, busy = false, last = null;
+  const hasKeys = s => s && s.cfg && Object.values(s.cfg).some(c => c && c.key);
+  try { S = Object.assign(S, JSON.parse(localStorage.getItem('chatcompare') || '{}')); } catch (e) {}
+  if (!hasKeys(S)) {
+    try {
+      const relay = JSON.parse(localStorage.getItem('chatrelay') || '{}');
+      if (hasKeys(relay)) { S.cfg = JSON.parse(JSON.stringify(relay.cfg)); $('imported').textContent = 'Your keys from chatrelay in this browser were copied here.'; }
+    } catch (e) {}
+  }
+  const save = () => { try { localStorage.setItem('chatcompare', JSON.stringify(S)); } catch (e) {} };
+  const ready = () => PROVIDERS.filter(p => S.cfg[p.id] && S.cfg[p.id].key && S.cfg[p.id].model);
+  const chosen = () => ready().filter(p => !S.off[p.id]);
+
+  function renderStart() {
+    const r = ready();
+    $('who').replaceChildren(...(r.length ? r.map(p => {
+      const box = el('input', { type: 'checkbox', checked: !S.off[p.id] });
+      box.onchange = () => { S.off[p.id] = !box.checked; save(); };
+      return el('label', { className: 'opt' }, box, `${p.name} (${S.cfg[p.id].model})`);
+    }) : [el('span', { className: 'mut', textContent: 'Open Settings and add API keys for at least two AIs to start.' })]));
+  }
+  const renderChat = () => {};
+
+  function renderSettings() {
+    $('provs').replaceChildren(...PROVIDERS.map(p => {
+      const c = S.cfg[p.id] || (S.cfg[p.id] = { key: '', model: '', models: [] });
+      const status = el('small', { className: 'mut' });
+      const key = el('input', { type: 'password', placeholder: `${p.name} API key`, value: c.key, autocomplete: 'off' });
+      key.setAttribute('aria-label', `${p.name} API key`);
+      const model = el('select');
+      model.setAttribute('aria-label', `${p.name} model`);
+      const fill = () => model.replaceChildren(...(c.models.length ? c.models.map(m => el('option', { value: m, textContent: m, selected: m === c.model }))
+                                                                    : [el('option', { value: '', textContent: 'no models loaded' })]));
+      fill();
+      const load = el('button', { type: 'button', textContent: 'Load models' });
+      key.onchange = () => { c.key = key.value.trim(); save(); renderStart(); };
+      model.onchange = () => { c.model = model.value; save(); renderStart(); };
+      load.onclick = async () => {
+        c.key = key.value.trim();
+        if (!c.key) { status.textContent = 'Paste the key first.'; return; }
+        status.textContent = 'Loading…';
+        try {
+          const res = await fetch(p.base + (p.kind === 'gemini' ? '/models?pageSize=200' : '/models'), { headers: headers(p, c.key) });
+          if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? 'the key was rejected' : 'error ' + res.status);
+          c.models = modelNames(p, await res.json());
+          if (!c.models.includes(c.model)) c.model = c.models[0] || '';
+          status.textContent = c.models.length ? `${c.models.length} models. Pick one.` : 'No chat models found for this key.';
+        } catch (e) { status.textContent = `Couldn't load models: ${e.message}.`; }
+        fill(); save(); renderStart(); renderChat();
+      };
+      return el('div', { className: 'prov' }, el('b', {}, p.name + ' ', el('a', { href: p.site, target: '_blank', rel: 'noopener', className: 'mut', textContent: 'get a key' })), key, model, load, status);
+    }));
+  }
+  function card(r) {
+    const head = el('h3', { textContent: r.provider.name });
+    const meta = el('div', { className: 'mut', textContent: r.model + (r.ok ? ` · ${r.secs.toFixed(1)} s · ${r.words} words` : '') });
+    if (!r.ok) return el('div', { className: 'card' }, head, meta, el('div', { className: 'pre err', textContent: `${r.provider.name} ${WHY[r.kind]} (${r.detail}).` }));
+    const cp = el('button', { className: 'small', textContent: 'Copy' });
+    cp.onclick = () => copy(r.text, cp);
+    return el('div', { className: 'card' }, head, meta, el('div', { className: 'pre', textContent: r.text }), el('div', { className: 'row' }, cp));
+  }
+
+  async function send() {
+    const question = $('in').value.trim(), list = chosen();
+    if (!question || busy) return;
+    if (!list.length) { $('settings').open = true; $('status').textContent = 'Add API keys and pick models in Settings, and tick at least one AI.'; return; }
+    busy = true; $('send').disabled = true; $('cmp').hidden = true; $('verdict').hidden = true; $('notes').textContent = '';
+    const slots = list.map(p => el('div', { className: 'card' }, el('h3', { textContent: p.name }), el('div', { className: 'mut', textContent: 'Waiting…' })));
+    $('res').replaceChildren(...slots);
+    let done = 0;
+    $('status').textContent = `Asking ${list.length} AI${list.length > 1 ? 's' : ''}…`;
+    const results = await Promise.all(list.map(async (p, i) => {
+      const r = await ask(p, S.cfg[p.id], question, (u, o) => fetch(u, o), () => performance.now());
+      slots[i].replaceWith(slots[i] = card(r));
+      $('status').textContent = `${++done} of ${list.length} answered…`;
+      return r;
+    }));
+    last = { question, results };
+    const ok = results.filter(r => r.ok);
+    $('status').textContent = '';
+    $('notes').textContent = summarize(results);
+    if (ok.length > 1) {
+      $('judge').replaceChildren(...ready().map(p => el('option', { value: p.id, textContent: `${p.name} (${S.cfg[p.id].model})` })));
+      $('cmp').hidden = false;
+    }
+    busy = false; $('send').disabled = false;
+  }
+
+  $('send').onclick = send;
+  $('in').onkeydown = ev => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); send(); } };
+  $('cmpgo').onclick = async () => {
+    const p = PROVIDERS.find(x => x.id === $('judge').value);
+    if (!p || !last || busy) return;
+    busy = true; $('cmpgo').disabled = true;
+    $('verdict').hidden = false; $('verdict').className = 'card pre'; $('verdict').textContent = `${p.name} is reading the answers…`;
+    const r = await callOnce(p, S.cfg[p.id], 'You compare texts carefully and fairly.', [{ role: 'user', text: comparePrompt(last.question, last.results) }], (u, o) => fetch(u, o));
+    $('verdict').textContent = r.ok ? r.text : `${p.name} ${WHY[r.kind]} (${r.detail}).`;
+    if (!r.ok) $('verdict').className = 'card pre err';
+    busy = false; $('cmpgo').disabled = false;
+  };
+  $('forget').onclick = () => { if (confirm('Remove every saved API key for chatcompare from this browser?')) { S.cfg = {}; S.off = {}; save(); renderSettings(); renderStart(); } };
+
+  renderSettings(); renderStart();
+  if (ready().length < 2) $('settings').open = true;
+}
+</script>
+</body>
+</html>
