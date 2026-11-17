@@ -1,0 +1,16 @@
+{
+  "name": "chatcompare",
+  "owner": {
+    "name": "spencerrios64"
+  },
+  "metadata": {
+    "description": "Compare answers from several AIs to the same question: where they agree, where they differ, and what only one said."
+  },
+  "plugins": [
+    {
+      "name": "chatcompare",
+      "source": "./plugin",
+      "description": "Compare answers from several AIs to the same question: where they agree, where they differ, and what only one said."
+    }
+  ]
+}
