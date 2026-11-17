@@ -33,4 +33,15 @@ same browser, they are copied over the first time, because both pages live on th
 - Tested with simulated API responses. Calls against the real APIs have not been tested
   with live keys yet, and a provider may block direct browser calls.
 
+## Claude plugin
+
+This repo is also a Claude plugin marketplace, so Claude can do the same job in a chat. In Claude Code:
+
+```
+/plugin marketplace add spencerrios64/chatcompare
+/plugin install chatcompare@chatcompare
+```
+
+In the Claude app, download the `plugin` folder as a zip, rename it to `.plugin` and open it in a chat. Details: [plugin/README.md](plugin/README.md).
+
 Part of a family of small tools for AI chats: [chatvault](https://github.com/spencerrios64/chatvault), [chatzip](https://github.com/spencerrios64/chatzip), [chatrelay](https://github.com/spencerrios64/chatrelay), [chatbrief](https://github.com/spencerrios64/chatbrief), [chatscrub](https://github.com/spencerrios64/chatscrub), [chatcompare](https://github.com/spencerrios64/chatcompare), [chatstats](https://github.com/spencerrios64/chatstats) and [promptbank](https://github.com/spencerrios64/promptbank).
